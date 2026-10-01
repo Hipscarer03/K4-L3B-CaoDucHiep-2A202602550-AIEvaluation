@@ -30,11 +30,11 @@ critical.
 
 | Metric | Acceptable Low Score Scenario | Critical Low Score Scenario | Action Required |
 |---|---|---|---|
-| Faithfulness | | | |
-| Answer Relevance | | | |
-| Context Recall | | | |
-| Context Precision | | | |
-| Completeness | | | |
+| Faithfulness | Bổ sung lời chào, câu xã giao lịch sự hoặc thông tin tư vấn chung không chứa sai sót thực tế dù không nằm trực tiếp trong context. | Trả lời thông tin hư cấu/sai lệch nghiêm trọng về giá cả, thông số kỹ thuật, hoặc chính sách bảo hành của OrbitTech Store (hallucination). | Siết chặt system prompt ("chỉ trả lời dựa trên context"), giảm LLM temperature, thêm guardrail kiểm tra tính xác thực. |
+| Answer Relevance | Khách hàng đặt câu hỏi quá mở/mơ hồ và trợ lý phải đưa ra các câu hỏi làm rõ (clarifying questions) thay vì trả lời trực tiếp ngay. | Trả lời hoàn toàn lạc đề (off-topic), cung cấp thông tin sản phẩm khác không liên quan đến thắc mắc của khách hàng. | Tối ưu prompt phát hiện ý định (intent detection), quy định cấu trúc phản hồi bám sát câu hỏi người dùng. |
+| Context Recall | Câu hỏi ngoài phạm vi hỗ trợ (out-of-domain/unanswerable query) nơi kiến thức store không tồn tại và assistant từ chối hợp lệ. | Tài liệu kiến thức OrbitTech có đầy đủ câu trả lời nhưng bộ truy xuất (retriever) bỏ sót các chunk thông tin quan trọng. | Mở rộng và cải thiện chia nhỏ văn bản (chunking strategy), bổ sung từ khóa đồng nghĩa, nâng cấp lên hybrid search. |
+| Context Precision | Top-k chunks retrieved chứa thông tin phụ trợ bổ ích và chunk quan trọng nhất vẫn nằm trong top-k dù không ở vị trí đầu tiên. | Các chunk đứng đầu (rank 1, 2) hoàn toàn là nhiễu/không liên quan, đẩy chunk chứa câu trả lời đúng xuống dưới hoặc ra ngoài k. | Bổ sung bước Reranking (Cross-Encoder reranker), tinh chỉnh thuật toán BM25 / Vector search score weight. |
+| Completeness | Người dùng yêu cầu tóm tắt ngắn gọn ý chính và assistant bỏ qua các chi tiết phụ không bắt buộc. | Trả lời thiếu các bước hướng dẫn bắt buộc trong quy trình (ví dụ: đổi trả có 3 bước nhưng chỉ nêu 1 bước), làm khách hàng không thực hiện được. | Tăng max_tokens, điều chỉnh prompt yêu cầu liệt kê đầy đủ tất cả điều kiện và các bước theo quy chuẩn. |
 
 ### Exercise 1.2 — Bias trong LLM-as-a-Judge
 
@@ -47,14 +47,23 @@ Ba bias thường gặp:
 **Câu 1: Thiết kế experiment phát hiện position bias với ít nhất hai conditions.**
 
 > *Câu trả lời:*
+> - **Condition 1 (Thứ tự gốc):** Đưa `Answer_A` ở vị trí `Option 1` và `Answer_B` ở vị trí `Option 2` vào prompt cho LLM Judge chấm pairwise.
+> - **Condition 2 (Đảo thứ tự):** Đổi vị trí `Answer_B` lên `Option 1` và `Answer_A` xuống `Option 2`.
+> - **Phân tích:** Nếu `Answer_A` thắng ở Condition 1 nhưng `Answer_B` lại thắng ở Condition 2 (luôn ưu tiên Option 1), hệ thống mắc Position Bias. Để khắc phục, chạy cả 2 lượt và lấy điểm trung bình hoặc áp dụng position swapping check.
 
 **Câu 2: Làm thế nào giảm verbosity bias bằng rubric design?**
 
 > *Câu trả lời:*
+> - Đánh giá theo **mật độ thông tin chuẩn xác (information density)** thay vì độ dài.
+> - Bổ sung tiêu chuẩn phạt (penalty criteria) cho các câu trả lời dài dòng, lặp từ, hoặc chứa nội dung rác (filler words).
+> - Đưa vào vài ví dụ (few-shot examples) chứng minh câu trả lời ngắn gọn, đúng trọng tâm đạt điểm 5/5, trong đó câu trả lời rườm rà bị điểm thấp.
+> - Yêu cầu LLM Judge trích xuất các ý chính (key points) trước khi chấm điểm thay vì đọc lướt văn bản.
 
 **Câu 3: Tại sao cần calibrate LLM judge với human labels?**
 
 > *Câu trả lời:*
+> - LLM Judge có thể mắc sai số hệ thống (systematic bias) hoặc đánh giá quá nương tay/quá khắt khe (leniency/severity bias).
+> - Calibrate với nhãn của con người (domain experts) giúp đo lường mức độ tương quan (correlation coefficient như Cohen's Kappa, Spearman), phát hiện điểm mù của model và hiệu chỉnh prompt/weight để LLM Judge đạt độ tin cậy tương đương chuyên gia.
 
 ### Exercise 1.3 — Evaluation trong CI/CD
 
@@ -62,13 +71,16 @@ Ba bias thường gặp:
 
 | Metric | Threshold | Lý do |
 |---|---:|---|
-| Faithfulness | | |
-| Answer Relevance | | |
-| Completeness | | |
+| Faithfulness | `>= 0.85` | Trong tư vấn OrbitTech Store, câu trả lời sai sự thật gây thiệt hại uy tín và pháp lý nghiêm trọng nhất. Cần ngưỡng chặn khắt khe nhất. |
+| Answer Relevance | `>= 0.75` | Đảm bảo trợ lý trả lời đúng trọng tâm thắc mắc của khách hàng, không trả lời vòng vo lạc đề gây lãng phí thời gian. |
+| Completeness | `>= 0.70` | Đảm bảo cung cấp đủ thông tin hướng dẫn cốt lõi để khách hàng tự giải quyết được vấn đề mà không cần hỏi lại. |
 
 **Câu 2: Khi nào dùng offline evaluation, online evaluation và human review?**
 
 > *Câu trả lời:*
+> - **Offline Evaluation (Pre-deployment / CI/CD):** Đánh giá tự động trên Golden Dataset trước khi deploy bản cập nhật mới nhằm phát hiện sớm regression và chặn các phiên bản không đạt quality gate.
+> - **Online Evaluation (Production Monitoring):** Đánh giá liên tục trên dữ liệu thật của khách hàng qua telemetry, user feedback (thumbs up/down), tỉ lệ hỏi lại, và lấy mẫu log cho LLM Judge giám sát thời gian thực.
+> - **Human Review (Expert Auditing & Calibration):** Đánh giá thủ công định kỳ bởi chuyên gia trên các ca điểm thấp (low-score alerts), ca lỗi (failure cases), để cập nhật Golden Dataset và calibrate LLM Judge.
 
 ---
 
